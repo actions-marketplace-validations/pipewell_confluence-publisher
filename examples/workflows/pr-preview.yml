@@ -1,0 +1,69 @@
+# Add this alongside publish.yml to post a dry-run preview comment on every
+# PR that touches your docs.  No Confluence credentials are needed — the
+# preview runs entirely from the manifest's stored hashes.
+#
+# The comment is updated (not duplicated) on each new push to the PR.
+
+name: Confluence publish preview
+
+on:
+  pull_request:
+    paths: ["docs/**/*.md"]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  preview:
+    name: Dry-run preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Fetch the base branch so we can diff against it
+          fetch-depth: 0
+
+      - name: Resolve changed files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'docs/**/*.md' | tr '\n' ' ')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run conversion
+        id: preview
+        uses: donolu/confluence-publisher@v1
+        with:
+          operation: sync
+          dry-run: 'true'
+          install-mermaid: 'false'
+          changed-files: ${{ steps.changed.outputs.files }}
+        # Dry-run does not call the Confluence API, so no credentials needed.
+        # The step may exit non-zero if conversion fails; we still want the comment.
+        continue-on-error: true
+
+      - name: Post PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RESULT="${{ steps.preview.outputs.result }}"
+          STATUS="${{ steps.preview.outcome }}"
+
+          if [ "$STATUS" = "success" ]; then
+            HEADER="**Confluence publish preview** — conversion OK"
+          else
+            HEADER="**Confluence publish preview** - conversion errors detected"
+          fi
+
+          BODY="${HEADER}
+
+          \`\`\`
+          ${RESULT}
+          \`\`\`
+
+          *Pages marked \`dry-run\` will be published to Confluence when this PR merges to \`main\`.*"
+
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --edit-last \
+            --body "$BODY" \
+          || gh pr comment ${{ github.event.pull_request.number }} \
+            --body "$BODY"

@@ -1,0 +1,131 @@
+name: 'confluence-publisher'
+description: 'Publish Markdown documentation from GitHub to Confluence (one-way sync)'
+author: 'donolu'
+
+inputs:
+  operation:
+    description: 'Operation to run: sync | check | validate-manifest'
+    required: false
+    default: 'sync'
+
+  # Confluence connection
+  confluence-base-url:
+    description: 'Confluence instance URL (e.g. https://your-org.atlassian.net)'
+    required: false
+    default: ''
+  confluence-mode:
+    description: 'cloud or dc'
+    required: false
+    default: 'cloud'
+  confluence-email:
+    description: 'Login email used for Basic Auth (Cloud only)'
+    required: false
+    default: ''
+  confluence-api-token:
+    description: 'API token (Cloud) or Personal Access Token (DC)'
+    required: false
+    default: ''
+  confluence-cert-pem:
+    description: 'Base64-encoded PEM certificate for DC mTLS — leave blank for Cloud'
+    required: false
+    default: ''
+
+  # Publish behaviour
+  repo-root:
+    description: 'Path to the directory containing confluence-manifest.yaml'
+    required: false
+    default: '.'
+  changed-files:
+    description: 'Space-separated list of changed .md files; omit to sync every manifest entry'
+    required: false
+    default: ''
+  dry-run:
+    description: 'Convert and report without making any Confluence API calls'
+    required: false
+    default: 'false'
+  strict-conflicts:
+    description: 'Exit non-zero when a Confluence page was manually edited since last publish'
+    required: false
+    default: 'false'
+
+  # Tooling
+  install-mermaid:
+    description: 'Install @mermaid-js/mermaid-cli so Mermaid diagrams render as PNG'
+    required: false
+    default: 'true'
+  python-version:
+    description: 'Python version'
+    required: false
+    default: '3.11'
+  package-ref:
+    description: 'Git ref or branch to install (defaults to the same ref the action was called from)'
+    required: false
+    default: ''
+
+outputs:
+  result:
+    description: 'Full stdout+stderr of the confluence-publisher command'
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install confluence-publisher
+      shell: bash
+      run: |
+        REF="${{ inputs.package-ref }}"
+        if [ -z "$REF" ]; then
+          REF="${GITHUB_ACTION_REF:-main}"
+        fi
+        pip install --quiet "git+https://github.com/donolu/confluence-publisher.git@${REF}"
+
+    - name: Install Mermaid CLI
+      if: inputs.install-mermaid == 'true' && inputs.operation == 'sync'
+      shell: bash
+      run: |
+        npm install -g @mermaid-js/mermaid-cli --silent
+        printf '{"args":["--no-sandbox"]}' > "$RUNNER_TEMP/puppeteer.json"
+
+    - name: Run confluence-publisher
+      id: run
+      shell: bash
+      env:
+        CONFLUENCE_BASE_URL: ${{ inputs.confluence-base-url }}
+        CONFLUENCE_MODE: ${{ inputs.confluence-mode }}
+        CONFLUENCE_EMAIL: ${{ inputs.confluence-email }}
+        CONFLUENCE_API_TOKEN: ${{ inputs.confluence-api-token }}
+        CONFLUENCE_CERT_PEM: ${{ inputs.confluence-cert-pem }}
+        MMDC_PUPPETEER_CFG: ${{ runner.temp }}/puppeteer.json
+      run: |
+        set +e
+        CMD=(confluence-publisher "${{ inputs.operation }}" --repo-root "${{ inputs.repo-root }}")
+
+        if [ "${{ inputs.operation }}" = "sync" ]; then
+          [ "${{ inputs.dry-run }}" = "true" ]         && CMD+=(--dry-run)
+          [ "${{ inputs.strict-conflicts }}" = "true" ] && CMD+=(--strict-conflicts)
+
+          if [ -n "${{ inputs.changed-files }}" ]; then
+            read -ra FILES <<< "${{ inputs.changed-files }}"
+            for f in "${FILES[@]}"; do
+              CMD+=(--changed-files "$f")
+            done
+          fi
+        fi
+
+        OUTPUT=$("${CMD[@]}" 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+
+        DELIM="EOF_$(openssl rand -hex 6)"
+        {
+          echo "result<<$DELIM"
+          echo "$OUTPUT"
+          echo "$DELIM"
+        } >> "$GITHUB_OUTPUT"
+
+        exit $EXIT_CODE

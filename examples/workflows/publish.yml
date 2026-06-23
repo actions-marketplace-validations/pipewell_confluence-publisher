@@ -1,0 +1,95 @@
+# Drop this file into your repo at .github/workflows/publish-to-confluence.yml
+# and configure the secrets/variables listed below.
+#
+# Required GitHub repository variables (Settings > Secrets and variables > Actions):
+#   CONFLUENCE_BASE_URL  e.g. https://your-org.atlassian.net
+#   CONFLUENCE_MODE      cloud  (or dc for Data Centre)
+#   CONFLUENCE_EMAIL     your.login@example.com  (Cloud only)
+#
+# Required GitHub repository secrets:
+#   CONFLUENCE_API_TOKEN  your Confluence API token
+
+name: Publish docs to Confluence
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**/*.md"]
+  schedule:
+    - cron: '0 7 * * 1-5'   # Mon-Fri 07:00 UTC — nightly manifest validation
+  workflow_dispatch:
+    inputs:
+      sync_all:
+        description: "Sync all manifest entries (not just changed files)"
+        type: boolean
+        default: false
+      validate_only:
+        description: "Run validate-manifest only (skip publish)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Validate syntax
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.validate_only)
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: donolu/confluence-publisher@v1
+        with:
+          operation: check
+
+  publish:
+    name: Publish to Confluence
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - name: Resolve changed files
+        id: changed
+        run: |
+          if [ "${{ github.event.inputs.sync_all }}" = "true" ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+          else
+            FILES=$(git diff --name-only HEAD~1 HEAD -- 'docs/**/*.md' | tr '\n' ' ')
+            echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: donolu/confluence-publisher@v1
+        with:
+          operation: sync
+          confluence-base-url: ${{ vars.CONFLUENCE_BASE_URL }}
+          confluence-mode: ${{ vars.CONFLUENCE_MODE }}
+          confluence-email: ${{ vars.CONFLUENCE_EMAIL }}
+          confluence-api-token: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          changed-files: ${{ steps.changed.outputs.files }}
+
+      - name: Commit manifest state
+        run: |
+          git config user.name "confluence-publisher-bot"
+          git config user.email "noreply@github.com"
+          git add confluence-manifest.yaml
+          git diff --cached --quiet || git commit -m "chore: update confluence-manifest state [skip ci]"
+          git push
+
+  validate:
+    name: Validate manifest
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.validate_only)
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: donolu/confluence-publisher@v1
+        with:
+          operation: validate-manifest
+          confluence-base-url: ${{ vars.CONFLUENCE_BASE_URL }}
+          confluence-mode: ${{ vars.CONFLUENCE_MODE }}
+          confluence-email: ${{ vars.CONFLUENCE_EMAIL }}
+          confluence-api-token: ${{ secrets.CONFLUENCE_API_TOKEN }}
