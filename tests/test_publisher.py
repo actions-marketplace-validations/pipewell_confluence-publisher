@@ -195,7 +195,7 @@ def test_check_pages_missing_file(tmp_path):
 
 def test_check_pages_unsupported_syntax(tmp_path):
     root, manifest = make_repo(
-        tmp_path, files={"docs/arch.md": "| a | b |\n|---|---|\n| 1 | 2 |\n", "docs/runbook.md": "text"}
+        tmp_path, files={"docs/arch.md": "![img](photo.png)", "docs/runbook.md": "text"}
     )
     errors = check_pages(manifest, root)
-    assert any("Phase 3" in e for e in errors)
+    assert any("Phase 2" in e for e in errors)

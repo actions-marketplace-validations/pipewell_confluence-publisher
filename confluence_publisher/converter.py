@@ -72,19 +72,25 @@ class ConfluenceRenderer(BaseRenderer):
         return f"<li>{self.render_inner(token)}</li>"
 
     def render_table(self, token):
-        raise ConversionError(
-            f"Tables are not supported until Phase 3 ('{self.source_path}')."
+        header_row = f"<tr>{self._render_row(token.header, header=True)}</tr>"
+        body_rows = "".join(
+            f"<tr>{self._render_row(row, header=False)}</tr>"
+            for row in token.children
+        )
+        return f"<table><tbody>{header_row}{body_rows}</tbody></table>"
+
+    def _render_row(self, row, header: bool) -> str:
+        tag = "th" if header else "td"
+        return "".join(
+            f"<{tag}><p>{self.render_inner(cell)}</p></{tag}>"
+            for cell in row.children
         )
 
     def render_table_row(self, token):
-        raise ConversionError(
-            f"Tables are not supported until Phase 3 ('{self.source_path}')."
-        )
+        return ""
 
     def render_table_cell(self, token):
-        raise ConversionError(
-            f"Tables are not supported until Phase 3 ('{self.source_path}')."
-        )
+        return self.render_inner(token)
 
     def render_strikethrough(self, token):
         raise ConversionError(

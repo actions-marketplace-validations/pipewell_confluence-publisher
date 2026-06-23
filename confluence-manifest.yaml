@@ -1,8 +1,44 @@
 version: 1
 defaults:
   space_id: Bazzoniare
-  parent_id: ''
+  parent_id: '131322'
 pages:
+  docs/BRD.md:
+    page_id: '98529'
+    title: Business Requirements
+    last_published_hash: b2d2bf96f272b95f9004c2d4fe37417bcd941755bbc7a2ae670a2bc5c1e863f0
+    last_published_version: 2
+    last_published_commit: 168ff7b
+  docs/TRD.md:
+    page_id: '66065'
+    title: Technical Requirements
+    last_published_hash: 3fbcb46eaed54f7e9b82044dd6e67f9991b5f16c28640cb7c9d6bb2018ccd588
+    last_published_version: 2
+    last_published_commit: 168ff7b
+  docs/ARCHITECTURE.md:
+    page_id: '66085'
+    title: Architecture
+    last_published_hash: 6b59b86e31249f82a11764e9c918c08545a698e7a41c7291c239b47aa77c174b
+    last_published_version: 2
+    last_published_commit: 168ff7b
+  docs/DELIVERY_PLAN.md:
+    page_id: '66105'
+    title: Delivery Plan
+    last_published_hash: 784f1f5e8d49254f78e34b484969fa45787de92ea2a9c3044480f990645e4aab
+    last_published_version: 2
+    last_published_commit: 168ff7b
+  docs/DECISIONS.md:
+    page_id: '327702'
+    title: Decisions & Open Questions
+    last_published_hash: 46b9d44fc5135120a68232d9b527a8847e21dc7e80d2f42594baac98d97e1488
+    last_published_version: 2
+    last_published_commit: 168ff7b
+  docs/MANIFEST_SPEC.md:
+    page_id: '327722'
+    title: Manifest Specification
+    last_published_hash: 446a1e4914f52170625731b2820068111b950cf6fd8169d55de3247f020b7db6
+    last_published_version: 2
+    last_published_commit: 168ff7b
   test-docs/hello-world.md:
     page_id: '327687'
     title: Hello World (confluence-publisher test)

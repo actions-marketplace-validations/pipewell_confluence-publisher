@@ -135,9 +135,11 @@ def test_image_raises():
     with pytest.raises(ConversionError, match="Phase 2"):
         render("![alt](image.png)")
 
-def test_table_raises():
-    with pytest.raises(ConversionError, match="Phase 3"):
-        render("| a | b |\n|---|---|\n| 1 | 2 |\n")
+def test_table_renders():
+    body = render("| a | b |\n|---|---|\n| 1 | 2 |\n")
+    assert "<table>" in body
+    assert "<th>" in body
+    assert "<td>" in body
 
 def test_strikethrough_raises():
     with pytest.raises(ConversionError, match="Strikethrough"):
