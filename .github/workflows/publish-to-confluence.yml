@@ -1,0 +1,80 @@
+name: Publish docs to Confluence
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**/*.md"]
+  workflow_dispatch:
+    inputs:
+      sync_all:
+        description: "Sync all manifest entries (not just changed files)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Validate syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Check manifest and conversion
+        run: confluence-publisher check
+
+  publish:
+    name: Publish to Confluence
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Resolve changed files
+        id: changed
+        run: |
+          if [ "${{ github.event.inputs.sync_all }}" = "true" ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+          else
+            FILES=$(git diff --name-only HEAD~1 HEAD -- 'docs/**/*.md' | tr '\n' ' ')
+            echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        env:
+          CONFLUENCE_BASE_URL: ${{ vars.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_MODE: ${{ vars.CONFLUENCE_MODE }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_CERT_PEM: ${{ secrets.CONFLUENCE_CERT_PEM }}
+          CONFLUENCE_EMAIL: ${{ vars.CONFLUENCE_EMAIL }}
+        run: |
+          if [ -z "${{ steps.changed.outputs.files }}" ]; then
+            confluence-publisher sync
+          else
+            confluence-publisher sync ${{ steps.changed.outputs.files }}
+          fi
+
+      - name: Commit manifest state
+        run: |
+          git config user.name "confluence-publisher-bot"
+          git config user.email "noreply@github.com"
+          git add confluence-manifest.yaml
+          git diff --cached --quiet || git commit -m "chore: update confluence-manifest state [skip ci]"
+          git push
