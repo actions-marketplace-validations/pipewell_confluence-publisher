@@ -91,6 +91,7 @@ jobs:
           fi
 
       - name: Commit manifest state
+        if: always()
         run: |
           git config user.name "confluence-publisher-bot"
           git config user.email "noreply@github.com"
