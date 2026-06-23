@@ -6,39 +6,39 @@ pages:
   docs/BRD.md:
     page_id: '98529'
     title: Business Requirements
-    last_published_hash: b2d2bf96f272b95f9004c2d4fe37417bcd941755bbc7a2ae670a2bc5c1e863f0
-    last_published_version: 2
-    last_published_commit: 168ff7b
+    last_published_hash: 56fd250ee6c2aaf5c36540a253a20dd6c4b424d02f823c6f50570a3fd5ae8682
+    last_published_version: 3
+    last_published_commit: bd73b70
   docs/TRD.md:
     page_id: '66065'
     title: Technical Requirements
-    last_published_hash: 3fbcb46eaed54f7e9b82044dd6e67f9991b5f16c28640cb7c9d6bb2018ccd588
-    last_published_version: 2
-    last_published_commit: 168ff7b
+    last_published_hash: 57204e6e52abfded454663b0280c3233c3567a8473df964c1377522367aaceaa
+    last_published_version: 3
+    last_published_commit: bd73b70
   docs/ARCHITECTURE.md:
     page_id: '66085'
     title: Architecture
-    last_published_hash: fd5fc370c0d8e5845a1fd69870726f5bdf65a55acf2420052d90a602695da6c4
-    last_published_version: 3
-    last_published_commit: 9072b89
+    last_published_hash: 82ed3296ff320d104030b7642608b624ec1d65d374245b56b7b5d66d3eeaa3db
+    last_published_version: 4
+    last_published_commit: bd73b70
   docs/DELIVERY_PLAN.md:
     page_id: '66105'
     title: Delivery Plan
-    last_published_hash: 784f1f5e8d49254f78e34b484969fa45787de92ea2a9c3044480f990645e4aab
-    last_published_version: 2
-    last_published_commit: 168ff7b
+    last_published_hash: 1b3095fa0b6e85834a23a7c5d1366a80b173062ebd6700ca0322a32991943357
+    last_published_version: 3
+    last_published_commit: bd73b70
   docs/DECISIONS.md:
     page_id: '327702'
     title: Decisions & Open Questions
-    last_published_hash: 46b9d44fc5135120a68232d9b527a8847e21dc7e80d2f42594baac98d97e1488
-    last_published_version: 2
-    last_published_commit: 168ff7b
+    last_published_hash: 9ba9e2d5160cb5cd9fc96380fc70b3eeb724eea2a333d5b32a2b7df8cdb3b648
+    last_published_version: 3
+    last_published_commit: bd73b70
   docs/MANIFEST_SPEC.md:
     page_id: '327722'
     title: Manifest Specification
-    last_published_hash: 446a1e4914f52170625731b2820068111b950cf6fd8169d55de3247f020b7db6
-    last_published_version: 2
-    last_published_commit: 168ff7b
+    last_published_hash: 79fd807c70042375fb18e952b0749844d4f07fd3826bb208277ae7ccce8542ea
+    last_published_version: 3
+    last_published_commit: bd73b70
   test-docs/hello-world.md:
     page_id: '327687'
     title: Hello World (confluence-publisher test)
