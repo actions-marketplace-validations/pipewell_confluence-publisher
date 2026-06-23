@@ -290,6 +290,50 @@ def test_auto_create_attachment_failure_leaves_placeholder(tmp_path):
     client.update_page.assert_not_called()
 
 
+def test_auto_create_attachment_failure_retries_via_update_path_on_next_run(tmp_path):
+    """Full lifecycle: failed create (attachment error) -> page_id persisted ->
+    next run succeeds via the update path without recreating the page."""
+    data = {
+        "version": 1,
+        "defaults": {"space_id": "TEST"},
+        "pages": {"docs/arch.md": {"title": "Architecture"}},
+    }
+    (tmp_path / "confluence-manifest.yaml").write_text(yaml.dump(data))
+    (tmp_path / "docs").mkdir()
+    img_dir = tmp_path / "docs" / "images"
+    img_dir.mkdir()
+    (img_dir / "fig.png").write_bytes(b"\x89PNG")
+    (tmp_path / "docs/arch.md").write_text("# Arch\n\n![fig](images/fig.png)\n")
+
+    # --- Run 1: attachment upload fails mid-create ---
+    client = make_client()
+    client.create_page.return_value = "999"
+    client.upload_attachment.side_effect = Exception("transient API error")
+
+    summary1 = publish_pages(load_manifest(tmp_path), ["docs/arch.md"], client, "sha1", tmp_path)
+
+    assert not summary1.succeeded
+    # Manifest on disk must carry the page_id even though the run failed
+    saved = yaml.safe_load((tmp_path / "confluence-manifest.yaml").read_text())
+    assert saved["pages"]["docs/arch.md"].get("page_id") == "999"
+    assert saved["pages"]["docs/arch.md"].get("last_published_hash") is None
+
+    # --- Run 2: attachment upload succeeds (transient error resolved) ---
+    client2 = make_client()
+    client2.get_page.return_value = {"version": 1, "body": "<p>placeholder</p>"}
+
+    summary2 = publish_pages(load_manifest(tmp_path), ["docs/arch.md"], client2, "sha2", tmp_path)
+
+    assert summary2.succeeded
+    # Must go through update path, not create a second page
+    client2.create_page.assert_not_called()
+    client2.update_page.assert_called_once()
+    client2.upload_attachment.assert_called_once()
+    # Hash now saved
+    saved2 = yaml.safe_load((tmp_path / "confluence-manifest.yaml").read_text())
+    assert saved2["pages"]["docs/arch.md"]["last_published_hash"] is not None
+
+
 def test_auto_create_dry_run_does_not_call_api(tmp_path):
     data = {
         "version": 1,

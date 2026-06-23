@@ -46,6 +46,24 @@ pages:
 - Updates are versioned; the Git commit SHA is stored in the Confluence version message
 - Missing images, Mermaid render failures, and upload errors all fail the build
 
+## Failure semantics
+
+All failures are hard errors — the build exits non-zero and CI is red. There are no silent failures.
+
+| Failure | Behaviour |
+|---|---|
+| Markdown conversion error (unsupported syntax) | Build fails; page not published |
+| Local image not found on disk | Build fails; page not published (pre-flight check) |
+| `mmdc` not installed (Mermaid diagrams present) | Build fails; page not published |
+| Mermaid render failure | Build fails; page not published |
+| Confluence API error during page create/update | Build fails; manifest unchanged |
+| Attachment upload failure on new page | Build fails; placeholder body stays in Confluence; `page_id` written to manifest; next push retries via the update path (no duplicate page created) |
+| Attachment upload failure on existing page | Build fails; page body not updated; manifest hash unchanged; next push retries |
+| Manual edit conflict (Confluence version > last published) | Warning by default; `--strict-conflicts` makes it a build error in both cases the page is still overwritten with GitHub content |
+
+The "Commit manifest state" step in the workflow uses `if: always()` so `page_id` values are committed
+to the repo even when the publish step exits non-zero. This ensures the retry guarantee holds across CI runs.
+
 ## Supported Markdown
 
 Headings, bold/italic/code, fenced code blocks (with syntax highlighting), tables,
