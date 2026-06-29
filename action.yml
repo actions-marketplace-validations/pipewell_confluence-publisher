@@ -1,4 +1,4 @@
-name: 'confluence-publisher'
+name: 'pipewell-confluence-publisher'
 description: 'Publish Markdown documentation from GitHub to Confluence (one-way sync)'
 author: 'pipewell'
 
