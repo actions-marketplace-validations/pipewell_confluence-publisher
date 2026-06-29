@@ -1,5 +1,9 @@
 # confluence-publisher
 
+[![PyPI version](https://img.shields.io/pypi/v/pipewell-confluence-publisher.svg)](https://pypi.org/project/pipewell-confluence-publisher/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pipewell-confluence-publisher.svg)](https://pypi.org/project/pipewell-confluence-publisher/)
+[![Licence: MIT](https://img.shields.io/badge/Licence-MIT-blue.svg)](LICENSE)
+
 A one-way publishing pipeline that syncs GitHub Markdown files to Confluence pages.
 
 **GitHub is the source of truth. Confluence is the generated presentation layer.**
@@ -13,7 +17,7 @@ A one-way publishing pipeline that syncs GitHub Markdown files to Confluence pag
 3. Add the three required secrets/variables to your repository settings.
 4. Push or trigger manually — pages appear in Confluence within minutes.
 
-See [docs/ONBOARDING.md](docs/ONBOARDING.md) for a full step-by-step guide.
+See [docs/ONBOARDING.md](https://github.com/pipewell/confluence-publisher/blob/main/docs/ONBOARDING.md) for a full step-by-step guide.
 
 ```yaml
 # confluence-manifest.yaml
@@ -109,10 +113,10 @@ This tool is intentionally narrow:
 
 | Document | Purpose |
 |---|---|
-| [docs/ONBOARDING.md](docs/ONBOARDING.md) | Step-by-step guide for connecting a new repository |
-| [docs/MANIFEST_SPEC.md](docs/MANIFEST_SPEC.md) | Full manifest format reference |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and component breakdown |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Decision log with rationale |
-| [docs/BRD.md](docs/BRD.md) | Business requirements and success metrics |
-| [docs/TRD.md](docs/TRD.md) | Technical requirements and API reference |
-| [docs/DELIVERY_PLAN.md](docs/DELIVERY_PLAN.md) | Phased delivery history |
+| [ONBOARDING](https://github.com/pipewell/confluence-publisher/blob/main/docs/ONBOARDING.md) | Step-by-step guide for connecting a new repository |
+| [MANIFEST_SPEC](https://github.com/pipewell/confluence-publisher/blob/main/docs/MANIFEST_SPEC.md) | Full manifest format reference |
+| [ARCHITECTURE](https://github.com/pipewell/confluence-publisher/blob/main/docs/ARCHITECTURE.md) | System design and component breakdown |
+| [DECISIONS](https://github.com/pipewell/confluence-publisher/blob/main/docs/DECISIONS.md) | Decision log with rationale |
+| [BRD](https://github.com/pipewell/confluence-publisher/blob/main/docs/BRD.md) | Business requirements and success metrics |
+| [TRD](https://github.com/pipewell/confluence-publisher/blob/main/docs/TRD.md) | Technical requirements and API reference |
+| [DELIVERY_PLAN](https://github.com/pipewell/confluence-publisher/blob/main/docs/DELIVERY_PLAN.md) | Phased delivery history |
