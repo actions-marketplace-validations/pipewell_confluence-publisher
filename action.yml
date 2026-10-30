@@ -33,6 +33,14 @@ inputs:
     description: 'Base64-encoded PEM certificate for DC mTLS; leave blank for Cloud'
     required: false
     default: ''
+  confluence-cloud-id:
+    description: >
+      Confluence Cloud tenant ID (Cloud only). Set this if your Atlassian org issues
+      fine-grained/scoped API tokens -- these are rejected on the direct tenant domain
+      and must be routed through Atlassian's API gateway by cloud ID instead. Leave
+      blank to use the direct domain (default, works with classic unrestricted tokens).
+    required: false
+    default: ''
 
   # Publish behaviour
   repo-root:
@@ -49,6 +57,12 @@ inputs:
     default: 'false'
   strict-conflicts:
     description: 'Exit non-zero when a Confluence page was manually edited since last publish'
+    required: false
+    default: 'false'
+  no-attribution:
+    description: >
+      Omit the "Published with confluence-publisher" line from the auto-generated banner.
+      Overrides defaults.attribution in the manifest; always wins toward off.
     required: false
     default: 'false'
 
@@ -72,6 +86,14 @@ inputs:
       Defaults to the built-in GITHUB_TOKEN.
     required: false
     default: ''
+  writeback-branch-prefix:
+    description: >
+      Prefix for the fallback branch name used to open a manifest write-back PR when a
+      direct commit is blocked (e.g. by branch protection). If your org enforces a
+      branch-naming ruleset, set this to something that satisfies it, e.g.
+      'chore/no-ticket-manifest-writeback-'. Defaults to 'manifest-writeback-'.
+    required: false
+    default: 'manifest-writeback-'
 
 outputs:
   result:
@@ -111,14 +133,16 @@ runs:
         CONFLUENCE_EMAIL: ${{ inputs.confluence-email }}
         CONFLUENCE_API_TOKEN: ${{ inputs.confluence-api-token }}
         CONFLUENCE_CERT_PEM: ${{ inputs.confluence-cert-pem }}
+        CONFLUENCE_CLOUD_ID: ${{ inputs.confluence-cloud-id }}
         MMDC_PUPPETEER_CFG: ${{ runner.temp }}/puppeteer.json
       run: |
         set +e
         CMD=(confluence-publisher "${{ inputs.operation }}" --repo-root "${{ inputs.repo-root }}")
 
         if [ "${{ inputs.operation }}" = "sync" ]; then
-          [ "${{ inputs.dry-run }}" = "true" ]         && CMD+=(--dry-run)
-          [ "${{ inputs.strict-conflicts }}" = "true" ] && CMD+=(--strict-conflicts)
+          [ "${{ inputs.dry-run }}" = "true" ]          && CMD+=(--dry-run)
+          [ "${{ inputs.strict-conflicts }}" = "true" ]  && CMD+=(--strict-conflicts)
+          [ "${{ inputs.no-attribution }}" = "true" ]    && CMD+=(--no-attribution)
 
           if [ -n "${{ inputs.changed-files }}" ]; then
             read -ra FILES <<< "${{ inputs.changed-files }}"
@@ -182,7 +206,7 @@ runs:
         # IMPORTANT: until this PR is merged, the next publish run will attempt to
         # re-create the same pages. Merge it promptly to avoid duplicates.
         echo "Direct commit blocked by branch protection — opening a PR instead."
-        BRANCH="manifest-writeback-$(date +%s)"
+        BRANCH="${{ inputs.writeback-branch-prefix }}$(date +%s)"
         git -C "$GITHUB_WORKSPACE" config user.name "github-actions[bot]"
         git -C "$GITHUB_WORKSPACE" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git -C "$GITHUB_WORKSPACE" checkout -b "$BRANCH"
@@ -192,13 +216,6 @@ runs:
         gh pr create \
           --repo "$GITHUB_REPOSITORY" \
           --title "chore: update confluence manifest with new page IDs" \
-          --body "$(cat <<'PRBODY'
-New Confluence pages were created in the last publish run. This PR records their page IDs in the manifest.
-
-**Merge this promptly.** Until it is merged, the next publish run will attempt to re-create these pages and may fail or create duplicates.
-
-To avoid this PR in future, grant \`github-actions[bot]\` bypass permission on the branch protection rule for \`main\` in your repository settings.
-PRBODY
-          )" \
+          --body $'New Confluence pages were created in the last publish run. This PR records their page IDs in the manifest.\n\n**Merge this promptly.** Until it is merged, the next publish run will attempt to re-create these pages and may fail or create duplicates.\n\nTo avoid this PR in future, grant `github-actions[bot]` bypass permission on the branch protection rule for `main` in your repository settings.' \
           --base "$GITHUB_REF_NAME" \
           --head "$BRANCH" || true

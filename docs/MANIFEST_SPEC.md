@@ -18,8 +18,10 @@ Page IDs, not titles, are used as stable identifiers. Titles can change; page ID
 version: 1
 
 defaults:
-  space_id: "ENG"            # Confluence space key (DC) or space ID (Cloud)
+  space_id: "ENG"            # Confluence space key (both DC and Cloud -- not the numeric space ID)
   parent_id: "123456"        # Default parent page for top-level docs
+  attribution: true          # Optional. Set false to omit the "Published with confluence-publisher"
+                              # line from the auto-generated banner. Defaults to true.
 
 pages:
   docs/architecture.md:
@@ -52,8 +54,9 @@ pages:
 | Field | Required | Description |
 |---|---|---|
 | `version` | Yes | Schema version. Currently `1`. |
-| `defaults.space_id` | Yes | Confluence space ID applied to all pages unless overridden. |
+| `defaults.space_id` | Yes | Confluence space key (e.g. `"ENG"`) applied to all pages unless overridden. Not the numeric space ID -- Cloud resolves the key via the API before creating or updating pages. |
 | `defaults.parent_id` | No | Default parent page ID. Applied where `parent_id` is not set. |
+| `defaults.attribution` | No | Set `false` to omit the "Published with confluence-publisher" line from the auto-generated banner on every page. Defaults to `true`. Can also be forced off per-run with the `--no-attribution` CLI flag / `no-attribution` action input, which always wins toward off regardless of this setting. |
 
 ### Per-page
 

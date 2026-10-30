@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import PurePosixPath
 
 from mistletoe import Document
 from mistletoe.base_renderer import BaseRenderer
+from mistletoe.block_token import HtmlBlock
+from mistletoe.span_token import HtmlSpan
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +36,11 @@ class ConfluenceRenderer(BaseRenderer):
         page_id_map: dict[str, str] | None = None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        # HtmlSpan/HtmlBlock aren't registered by mistletoe by default, which
+        # means raw HTML would otherwise fall through to RawText and render as
+        # harmless (but silently wrong) escaped literal text instead of the
+        # documented "raises a conversion error" behaviour.
+        super().__init__(HtmlSpan, HtmlBlock, **kwargs)
         self.source_path = source_path
         self._page_id_map = page_id_map or {}
         self._source_dir = str(PurePosixPath(source_path).parent)
@@ -87,8 +95,10 @@ class ConfluenceRenderer(BaseRenderer):
         )
 
     def render_list(self, token):
-        tag = "ol" if token.start is not None else "ul"
-        return f"<{tag}>{self.render_inner(token)}</{tag}>"
+        if token.start is None:
+            return f"<ul>{self.render_inner(token)}</ul>"
+        start_attr = f' start="{token.start}"' if token.start != 1 else ""
+        return f"<ol{start_attr}>{self.render_inner(token)}</ol>"
 
     def render_list_item(self, token):
         return f"<li>{self.render_inner(token)}</li>"
@@ -102,7 +112,10 @@ class ConfluenceRenderer(BaseRenderer):
 
     def _render_row(self, row, header: bool) -> str:
         tag = "th" if header else "td"
-        return "".join(f"<{tag}><p>{self.render_inner(cell)}</p></{tag}>" for cell in row.children)
+        return "".join(
+            f"<{tag}{_align_attr(cell.align)}><p>{self.render_inner(cell)}</p></{tag}>"
+            for cell in row.children
+        )
 
     def render_table_row(self, token):
         return ""
@@ -186,6 +199,11 @@ class ConfluenceRenderer(BaseRenderer):
             f"Inline HTML is not supported ('{self.source_path}'). Remove or convert to Markdown."
         )
 
+    def render_html_block(self, token):
+        raise ConversionError(
+            f"Raw HTML is not supported ('{self.source_path}'). Remove or convert to Markdown."
+        )
+
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -200,6 +218,15 @@ def _escape_attr(text: str) -> str:
 def _escape_cdata(text: str) -> str:
     """Split ]]> so it cannot prematurely close a CDATA section."""
     return text.replace("]]>", "]]]]><![CDATA[>")
+
+
+def _align_attr(align: int | None) -> str:
+    """mistletoe cell alignment: None = left (default), 0 = center, 1 = right."""
+    if align == 0:
+        return ' style="text-align: center;"'
+    if align == 1:
+        return ' style="text-align: right;"'
+    return ""
 
 
 def _is_external(url: str) -> bool:
@@ -219,14 +246,39 @@ def _resolve_path(source_dir: str, rel_path: str) -> str:
     return "/".join(parts)
 
 
-def build_banner(source_path: str, commit_sha: str) -> str:
+def _tool_version() -> str:
+    try:
+        return version("pipewell-confluence-publisher")
+    except PackageNotFoundError:
+        return "dev"
+
+
+def build_banner(
+    source_path: str,
+    commit_sha: str,
+    attribution: bool = True,
+    repo_url: str | None = None,
+) -> str:
+    attribution_line = (
+        f'<br/>Published with <a href="https://github.com/pipewell/confluence-publisher">'
+        f"confluence-publisher</a> v{_tool_version()}."
+        if attribution
+        else ""
+    )
+    if repo_url:
+        source_href = f"{repo_url.rstrip('/')}/blob/{commit_sha}/{source_path}"
+        source_display = (
+            f'<a href="{_escape_attr(source_href)}"><code>{_escape(source_path)}</code></a>'
+        )
+    else:
+        source_display = f"<code>{_escape(source_path)}</code>"
     return (
         f'<ac:structured-macro ac:name="info">'
         f"<ac:rich-text-body>"
         f"<p>This page is auto-generated from GitHub. "
         f"Manual edits will be overwritten on next publish.<br/>"
-        f"Source: <code>{_escape(source_path)}</code> "
-        f"@ <code>{_escape(commit_sha)}</code></p>"
+        f"Source: {source_display} "
+        f"@ <code>{_escape(commit_sha)}</code>{attribution_line}</p>"
         f"</ac:rich-text-body>"
         f"</ac:structured-macro>"
     )
@@ -236,11 +288,41 @@ def content_hash(body: str) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
 
+_INLINE_COMMENT_MARKER_RE = re.compile(
+    r'<ac:inline-comment-marker ac:ref="([\w-]+)">(.*?)</ac:inline-comment-marker>',
+    re.DOTALL,
+)
+
+
+def preserve_inline_comments(old_body: str, new_body: str) -> str:
+    """Best-effort: re-anchor inline comments from old_body onto matching text in
+    new_body, so a republish doesn't orphan them. Confluence reconnects an inline
+    comment thread to its original position as long as the same ac:ref reappears
+    in the body (confirmed by live testing, not just documentation).
+
+    Only plain-text anchors (no nested markup, e.g. a comment on bold/italic text)
+    are attempted, and only when the anchored text appears exactly once in
+    new_body -- comments on text that moved, changed, or is now ambiguous can't be
+    reliably relocated and are left as-is, which is exactly today's behaviour
+    (the comment thread survives in Confluence but is no longer anchored to
+    specific text). This never makes things worse than the status quo.
+    """
+    for ref, text in _INLINE_COMMENT_MARKER_RE.findall(old_body):
+        if "<" in text:
+            continue  # nested markup inside the anchor -- unsafe to relocate
+        if new_body.count(text) == 1:
+            marker = f'<ac:inline-comment-marker ac:ref="{ref}">{text}</ac:inline-comment-marker>'
+            new_body = new_body.replace(text, marker, 1)
+    return new_body
+
+
 def convert(
     text: str,
     source_path: str,
     commit_sha: str,
     page_id_map: dict[str, str] | None = None,
+    attribution: bool = True,
+    repo_url: str | None = None,
 ) -> ConversionResult:
     """Convert Markdown to Confluence Storage Format.
 
@@ -254,7 +336,7 @@ def convert(
         body = renderer.render(doc)
         images = list(renderer.images)
         mermaid_blocks = list(renderer.mermaid_blocks)
-    banner = build_banner(source_path, commit_sha)
+    banner = build_banner(source_path, commit_sha, attribution=attribution, repo_url=repo_url)
     return ConversionResult(
         body=body,
         full_body=banner + body,

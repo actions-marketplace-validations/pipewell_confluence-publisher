@@ -11,6 +11,7 @@ from confluence_publisher.converter import (
     build_banner,
     content_hash,
     convert,
+    preserve_inline_comments,
 )
 
 
@@ -114,6 +115,12 @@ def test_ordered_list():
     out = render("1. first\n2. second\n")
     assert out.startswith("<ol>")
     assert "first" in out
+
+
+def test_ordered_list_non_default_start():
+    out = render("3. third\n4. fourth\n")
+    assert out.startswith('<ol start="3">')
+    assert "third" in out
 
 
 def test_nested_list():
@@ -247,9 +254,30 @@ def test_table_renders():
     assert "<td>" in body
 
 
+def test_table_column_alignment_preserved():
+    body = render("| left | center | right |\n|:---|:---:|---:|\n| 1 | 2 | 3 |\n")
+    assert '<th style="text-align: center;">' in body
+    assert '<th style="text-align: right;">' in body
+    assert '<td style="text-align: center;">' in body
+    assert '<td style="text-align: right;">' in body
+    # left-aligned (the default) gets no style attribute
+    assert "<th>" in body
+    assert "<td>" in body
+
+
 def test_strikethrough_raises():
     with pytest.raises(ConversionError, match="Strikethrough"):
         render("~~deleted~~")
+
+
+def test_inline_html_raises():
+    with pytest.raises(ConversionError, match="Inline HTML"):
+        render("Some <b>bold</b> text.")
+
+
+def test_block_html_raises():
+    with pytest.raises(ConversionError, match="Raw HTML"):
+        render("<div>\nblock html\n</div>\n")
 
 
 # --- Banner ---
@@ -265,6 +293,118 @@ def test_build_banner_contains_source():
 def test_build_banner_escapes_path():
     banner = build_banner("docs/<special>.md", "sha")
     assert "&lt;special&gt;" in banner
+
+
+def test_build_banner_includes_tool_attribution():
+    banner = build_banner("docs/arch.md", "abc1234")
+    assert "confluence-publisher</a> v" in banner
+    assert "github.com/pipewell/confluence-publisher" in banner
+
+
+def test_build_banner_attribution_can_be_disabled():
+    banner = build_banner("docs/arch.md", "abc1234", attribution=False)
+    assert "confluence-publisher</a>" not in banner
+    assert "github.com/pipewell/confluence-publisher" not in banner
+    # Rest of the banner is untouched.
+    assert "docs/arch.md" in banner
+    assert "abc1234" in banner
+
+
+def test_build_banner_source_is_plain_text_without_repo_url():
+    banner = build_banner("docs/arch.md", "abc1234")
+    assert "<code>docs/arch.md</code>" in banner
+    assert "<a href=" not in banner.split("Published with")[0]
+
+
+def test_build_banner_source_links_to_file_when_repo_url_given():
+    banner = build_banner(
+        "docs/arch.md", "abc1234", repo_url="https://github.com/pipewell/confluence-publisher"
+    )
+    assert (
+        '<a href="https://github.com/pipewell/confluence-publisher/blob/abc1234/docs/arch.md">'
+        "<code>docs/arch.md</code></a>" in banner
+    )
+
+
+def test_build_banner_source_link_escapes_path():
+    banner = build_banner(
+        "docs/<special>.md", "sha", repo_url="https://github.com/pipewell/confluence-publisher"
+    )
+    assert "&lt;special&gt;" in banner
+
+
+def test_build_banner_source_link_strips_trailing_slash_on_repo_url():
+    banner = build_banner(
+        "docs/arch.md", "sha", repo_url="https://github.com/pipewell/confluence-publisher/"
+    )
+    assert "confluence-publisher/blob/sha/docs/arch.md" in banner
+    assert "confluence-publisher//blob" not in banner
+
+
+# --- preserve_inline_comments() ---
+
+
+def test_preserve_inline_comments_reanchors_unchanged_text():
+    old_body = '<ul><li><p><ac:inline-comment-marker ac:ref="abc-123">Heading conversion</ac:inline-comment-marker></p></li></ul>'
+    new_body = "<ul><li><p>Heading conversion</p></li></ul>"
+    result = preserve_inline_comments(old_body, new_body)
+    assert (
+        '<ac:inline-comment-marker ac:ref="abc-123">Heading conversion</ac:inline-comment-marker>'
+        in result
+    )
+
+
+def test_preserve_inline_comments_skips_when_text_changed():
+    old_body = (
+        '<p><ac:inline-comment-marker ac:ref="abc-123">old wording</ac:inline-comment-marker></p>'
+    )
+    new_body = "<p>new wording</p>"
+    result = preserve_inline_comments(old_body, new_body)
+    assert result == new_body
+    assert "ac:inline-comment-marker" not in result
+
+
+def test_preserve_inline_comments_skips_when_text_ambiguous():
+    old_body = (
+        '<p><ac:inline-comment-marker ac:ref="abc-123">click here</ac:inline-comment-marker></p>'
+    )
+    new_body = "<p>click here</p><p>click here</p>"
+    result = preserve_inline_comments(old_body, new_body)
+    assert result == new_body
+    assert "ac:inline-comment-marker" not in result
+
+
+def test_preserve_inline_comments_skips_nested_markup():
+    old_body = '<p><ac:inline-comment-marker ac:ref="abc-123"><strong>bold text</strong></ac:inline-comment-marker></p>'
+    new_body = "<p><strong>bold text</strong></p>"
+    result = preserve_inline_comments(old_body, new_body)
+    assert result == new_body
+    assert "ac:inline-comment-marker" not in result
+
+
+def test_preserve_inline_comments_no_markers_in_old_body():
+    old_body = "<p>plain text</p>"
+    new_body = "<p>plain text</p>"
+    assert preserve_inline_comments(old_body, new_body) == new_body
+
+
+def test_preserve_inline_comments_multiple_markers():
+    old_body = (
+        '<p><ac:inline-comment-marker ac:ref="bb1b3a54-4a2e-4d4f-8585-5030daa5ecb9">first'
+        "</ac:inline-comment-marker></p>"
+        '<p><ac:inline-comment-marker ac:ref="cc2c4b65-5b3f-5e5f-9696-6141ebb6fdca">second'
+        "</ac:inline-comment-marker></p>"
+    )
+    new_body = "<p>first</p><p>second</p>"
+    result = preserve_inline_comments(old_body, new_body)
+    assert (
+        '<ac:inline-comment-marker ac:ref="bb1b3a54-4a2e-4d4f-8585-5030daa5ecb9">first'
+        "</ac:inline-comment-marker>" in result
+    )
+    assert (
+        '<ac:inline-comment-marker ac:ref="cc2c4b65-5b3f-5e5f-9696-6141ebb6fdca">second'
+        "</ac:inline-comment-marker>" in result
+    )
 
 
 # --- convert() ---
@@ -289,6 +429,16 @@ def test_convert_banner_prepended():
 def test_convert_collects_images():
     result = convert("![fig](images/fig.png)\n", "docs/arch.md", "sha")
     assert result.images == ["docs/images/fig.png"]
+
+
+def test_convert_attribution_can_be_disabled():
+    result = convert("para\n", "f.md", "sha", attribution=False)
+    assert "confluence-publisher</a>" not in result.full_body
+
+
+def test_convert_passes_repo_url_to_banner():
+    result = convert("para\n", "f.md", "sha", repo_url="https://github.com/pipewell/x")
+    assert '<a href="https://github.com/pipewell/x/blob/sha/f.md">' in result.full_body
 
 
 def test_convert_collects_mermaid():

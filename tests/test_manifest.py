@@ -54,7 +54,7 @@ def test_missing_title_raises(tmp_path):
 def test_duplicate_page_id_raises(tmp_path):
     data = {
         "version": 1,
-        "defaults": {},
+        "defaults": {"space_id": "S"},
         "pages": {
             "docs/a.md": {"page_id": "999", "title": "A"},
             "docs/b.md": {"page_id": "999", "title": "B"},
@@ -99,6 +99,39 @@ def test_save_manifest_does_not_add_missing_pages(tmp_path):
     assert "docs/ghost.md" not in written["pages"]
 
 
+def test_save_manifest_preserves_comments(tmp_path):
+    # Hand-authored comments (e.g. a staged, commented-out future page entry)
+    # must survive an automated write-back, not be silently deleted.
+    manifest_path = tmp_path / "confluence-manifest.yaml"
+    manifest_path.write_text(
+        "version: 1\n"
+        "defaults:\n"
+        "  space_id: TEST\n"
+        "  parent_id: '100'\n"
+        "# real parent id is 100, not the test one\n"
+        "pages:\n"
+        "  docs/arch.md:\n"
+        "    page_id: '111'\n"
+        "    title: Architecture\n"
+        "\n"
+        "  # docs/future.md:\n"
+        "  #   title: Future Page\n"
+    )
+    m = load_manifest(tmp_path)
+    m.pages["docs/arch.md"].last_published_hash = "abc123"
+
+    save_manifest(m)
+
+    written_text = manifest_path.read_text()
+    assert "# real parent id is 100, not the test one" in written_text
+    assert "# docs/future.md:" in written_text
+    assert "#   title: Future Page" in written_text
+
+    # and the state update still landed correctly
+    reloaded = load_manifest(tmp_path)
+    assert reloaded.pages["docs/arch.md"].last_published_hash == "abc123"
+
+
 def test_space_id_inherited_from_defaults(tmp_path):
     write_manifest(tmp_path, VALID_MANIFEST)
     m = load_manifest(tmp_path)
@@ -114,3 +147,25 @@ def test_entry_without_page_id_is_allowed(tmp_path):
     write_manifest(tmp_path, data)
     m = load_manifest(tmp_path)
     assert m.pages["docs/new.md"].page_id is None
+
+
+def test_missing_space_id_raises(tmp_path):
+    data = {
+        "version": 1,
+        "defaults": {},
+        "pages": {"docs/new.md": {"title": "New Page"}},
+    }
+    write_manifest(tmp_path, data)
+    with pytest.raises(ValueError, match="Missing 'space_id'"):
+        load_manifest(tmp_path)
+
+
+def test_per_page_space_id_satisfies_missing_default(tmp_path):
+    data = {
+        "version": 1,
+        "defaults": {},
+        "pages": {"docs/new.md": {"title": "New Page", "space_id": "OVERRIDE"}},
+    }
+    write_manifest(tmp_path, data)
+    m = load_manifest(tmp_path)
+    assert m.pages["docs/new.md"].space_id == "OVERRIDE"

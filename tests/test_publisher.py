@@ -131,6 +131,28 @@ def test_conversion_error_is_error(tmp_path):
     client.update_page.assert_not_called()
 
 
+def test_unhandled_exception_on_one_file_does_not_abort_batch_or_lose_earlier_state(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    client = make_client()
+    # docs/runbook.md is not valid UTF-8, so read_text() raises UnicodeDecodeError --
+    # an unexpected error that isn't a ConversionError.
+    (root / "docs/runbook.md").write_bytes(b"\xff\xfe not valid utf-8")
+
+    summary = publish_pages(manifest, ["docs/arch.md", "docs/runbook.md"], client, "sha", root)
+
+    arch_result = next(r for r in summary.results if r.file_path == "docs/arch.md")
+    runbook_result = next(r for r in summary.results if r.file_path == "docs/runbook.md")
+    assert arch_result.status == "published"
+    assert runbook_result.status == "error"
+    assert "Unexpected error" in runbook_result.message
+
+    # The crash on runbook.md must not prevent arch.md's already-published state
+    # from being persisted to the manifest on disk.
+    reloaded = load_manifest(root)
+    assert reloaded.pages["docs/arch.md"].last_published_hash is not None
+    assert reloaded.pages["docs/arch.md"].last_published_version == 6
+
+
 def test_api_error_is_error(tmp_path):
     root, manifest = make_repo(tmp_path)
     client = make_client()
@@ -536,6 +558,100 @@ def test_dry_run_does_not_save_manifest(tmp_path):
     with patch("confluence_publisher.publisher.save_manifest") as mock_save:
         publish_pages(manifest, ["docs/arch.md"], client, "sha", root, dry_run=True)
         mock_save.assert_not_called()
+
+
+# --- Attribution ---
+
+
+def test_attribution_included_by_default(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    client = make_client()
+    publish_pages(manifest, ["docs/arch.md"], client, "sha", root)
+    _, kwargs = client.update_page.call_args
+    assert "confluence-publisher</a>" in kwargs["body"]
+
+
+def test_attribution_disabled_via_manifest_default(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    manifest.defaults["attribution"] = False
+    client = make_client()
+    publish_pages(manifest, ["docs/arch.md"], client, "sha", root)
+    _, kwargs = client.update_page.call_args
+    assert "confluence-publisher</a>" not in kwargs["body"]
+
+
+def test_attribution_disabled_via_cli_override(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    client = make_client()
+    publish_pages(manifest, ["docs/arch.md"], client, "sha", root, no_attribution=True)
+    _, kwargs = client.update_page.call_args
+    assert "confluence-publisher</a>" not in kwargs["body"]
+
+
+def test_cli_override_wins_even_when_manifest_already_true(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    manifest.defaults["attribution"] = True
+    client = make_client()
+    publish_pages(manifest, ["docs/arch.md"], client, "sha", root, no_attribution=True)
+    _, kwargs = client.update_page.call_args
+    assert "confluence-publisher</a>" not in kwargs["body"]
+
+
+def test_repo_url_links_source_path_in_banner(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    client = make_client()
+    publish_pages(
+        manifest,
+        ["docs/arch.md"],
+        client,
+        "sha",
+        root,
+        repo_url="https://github.com/pipewell/x",
+    )
+    _, kwargs = client.update_page.call_args
+    assert '<a href="https://github.com/pipewell/x/blob/sha/docs/arch.md">' in kwargs["body"]
+
+
+def test_no_repo_url_leaves_source_as_plain_text(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    client = make_client()
+    publish_pages(manifest, ["docs/arch.md"], client, "sha", root)
+    _, kwargs = client.update_page.call_args
+    assert "<code>docs/arch.md</code>" in kwargs["body"]
+
+
+# --- Inline comment preservation ---
+
+
+def test_inline_comment_reanchored_on_update(tmp_path):
+    root, manifest = make_repo(tmp_path)
+    client = make_client()
+    client.get_page.return_value = {
+        "version": 5,
+        "body": '<h1>Architecture</h1><p><ac:inline-comment-marker ac:ref="abc-123">'
+        "Content here.</ac:inline-comment-marker></p>",
+    }
+    publish_pages(manifest, ["docs/arch.md"], client, "sha", root)
+    _, kwargs = client.update_page.call_args
+    assert (
+        '<ac:inline-comment-marker ac:ref="abc-123">Content here.</ac:inline-comment-marker>'
+        in kwargs["body"]
+    )
+
+
+def test_inline_comment_not_reanchored_when_text_changed(tmp_path):
+    root, manifest = make_repo(
+        tmp_path, {"docs/arch.md": "# Architecture\n\nRewritten paragraph.\n"}
+    )
+    client = make_client()
+    client.get_page.return_value = {
+        "version": 5,
+        "body": '<h1>Architecture</h1><p><ac:inline-comment-marker ac:ref="abc-123">'
+        "Content here.</ac:inline-comment-marker></p>",
+    }
+    publish_pages(manifest, ["docs/arch.md"], client, "sha", root)
+    _, kwargs = client.update_page.call_args
+    assert "ac:inline-comment-marker" not in kwargs["body"]
 
 
 # --- _render_mermaid ---

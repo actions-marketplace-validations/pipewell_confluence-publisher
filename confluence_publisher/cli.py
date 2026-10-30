@@ -22,15 +22,17 @@ logger = logging.getLogger(__name__)
 def _build_client() -> ConfluenceClient:
     base_url = os.environ.get("CONFLUENCE_BASE_URL", "").rstrip("/")
     token = os.environ.get("CONFLUENCE_API_TOKEN", "")
-    mode = os.environ.get("CONFLUENCE_MODE", "dc").lower()
+    mode = os.environ.get("CONFLUENCE_MODE", "").lower()
     email = os.environ.get("CONFLUENCE_EMAIL")
     cert_pem_b64 = os.environ.get("CONFLUENCE_CERT_PEM")
+    cloud_id = os.environ.get("CONFLUENCE_CLOUD_ID") or None
 
     missing = [
         k
         for k, v in [
             ("CONFLUENCE_BASE_URL", base_url),
             ("CONFLUENCE_API_TOKEN", token),
+            ("CONFLUENCE_MODE", mode),
         ]
         if not v
     ]
@@ -43,6 +45,7 @@ def _build_client() -> ConfluenceClient:
         mode=mode,
         email=email,
         cert_pem_b64=cert_pem_b64,
+        cloud_id=cloud_id,
     )
 
 
@@ -51,6 +54,17 @@ def _get_commit_sha() -> str:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     except Exception:
         return os.environ.get("GITHUB_SHA", "unknown")[:7]
+
+
+def _get_repo_url() -> str | None:
+    """Derive the repo's GitHub URL from Actions-provided env vars, for linking the
+    banner's source path back to the file. None outside GitHub Actions (e.g. local
+    CLI use) -- the banner falls back to plain text rather than a broken link."""
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    if not repository:
+        return None
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    return f"{server_url.rstrip('/')}/{repository}"
 
 
 @click.group()
@@ -74,8 +88,22 @@ def main():
         "but the build fails so the team is notified of the overwrite."
     ),
 )
+@click.option(
+    "--no-attribution",
+    is_flag=True,
+    help=(
+        "Omit the 'Published with confluence-publisher' line from the auto-generated banner. "
+        "Overrides defaults.attribution in the manifest; always wins toward off."
+    ),
+)
 @click.option("--repo-root", default=".", show_default=True, help="Repository root directory.")
-def sync(changed_files: tuple[str, ...], dry_run: bool, strict_conflicts: bool, repo_root: str):
+def sync(
+    changed_files: tuple[str, ...],
+    dry_run: bool,
+    strict_conflicts: bool,
+    no_attribution: bool,
+    repo_root: str,
+):
     """Publish changed Markdown files to Confluence."""
     root = Path(repo_root).resolve()
     manifest = load_manifest(root)
@@ -97,6 +125,8 @@ def sync(changed_files: tuple[str, ...], dry_run: bool, strict_conflicts: bool, 
         repo_root=root,
         dry_run=dry_run,
         strict_conflicts=strict_conflicts,
+        no_attribution=no_attribution,
+        repo_url=_get_repo_url(),
     )
 
     for result in summary.results:

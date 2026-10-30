@@ -6,12 +6,13 @@ import requests
 from confluence_publisher.confluence_client import ConfluenceClient
 
 
-def make_client(mode: str = "cloud") -> ConfluenceClient:
+def make_client(mode: str = "cloud", cloud_id: str | None = None) -> ConfluenceClient:
     return ConfluenceClient(
         base_url="https://example.atlassian.net",
         token="token",
         mode=mode,
         email="user@example.com",
+        cloud_id=cloud_id,
     )
 
 
@@ -33,7 +34,7 @@ def test_create_page_cloud_calls_v2(tmp_path):
     client._space_id_cache["MYSPACE"] = "123"
 
     with patch.object(
-        client, "_request", return_value=mock_response(200, {"id": "456"})
+        client, "_request_no_retry", return_value=mock_response(200, {"id": "456"})
     ) as mock_req:
         page_id = client.create_page("My Page", "MYSPACE", "100", "<p>body</p>")
 
@@ -52,7 +53,7 @@ def test_create_page_cloud_no_parent(tmp_path):
     client._space_id_cache["MYSPACE"] = "123"
 
     with patch.object(
-        client, "_request", return_value=mock_response(200, {"id": "456"})
+        client, "_request_no_retry", return_value=mock_response(200, {"id": "456"})
     ) as mock_req:
         client.create_page("My Page", "MYSPACE", "", "<p>body</p>")
 
@@ -64,7 +65,7 @@ def test_create_page_dc_calls_v1():
     client = make_client("dc")
 
     with patch.object(
-        client, "_request", return_value=mock_response(200, {"id": "789"})
+        client, "_request_no_retry", return_value=mock_response(200, {"id": "789"})
     ) as mock_req:
         page_id = client.create_page("DC Page", "DCSPACE", "50", "<p>body</p>")
 
@@ -80,12 +81,44 @@ def test_create_page_dc_no_parent():
     client = make_client("dc")
 
     with patch.object(
-        client, "_request", return_value=mock_response(200, {"id": "789"})
+        client, "_request_no_retry", return_value=mock_response(200, {"id": "789"})
     ) as mock_req:
         client.create_page("DC Page", "DCSPACE", "", "<p>body</p>")
 
     payload = mock_req.call_args[1]["json"]
     assert "ancestors" not in payload
+
+
+def test_create_page_does_not_retry_on_5xx():
+    """A lost 503 response after the page was actually created server-side must
+    not be retried -- retrying a create POST risks a duplicate page."""
+    client = make_client("cloud")
+    client._space_id_cache["MYSPACE"] = "123"
+
+    session_mock = MagicMock()
+    session_mock.request.return_value = mock_response(503)
+    client._session = session_mock
+
+    with pytest.raises(requests.HTTPError):
+        client.create_page("My Page", "MYSPACE", "100", "<p>body</p>")
+
+    assert session_mock.request.call_count == 1
+
+
+def test_create_page_cloud_gateway_routing():
+    """With cloud_id set, calls must route through the API gateway by tenant ID,
+    not the direct domain -- fine-grained/scoped tokens 401 on the direct domain."""
+    client = make_client("cloud", cloud_id="tenant-123")
+    client._space_id_cache["MYSPACE"] = "123"
+
+    with patch.object(
+        client, "_request_no_retry", return_value=mock_response(200, {"id": "456"})
+    ) as mock_req:
+        client.create_page("My Page", "MYSPACE", "100", "<p>body</p>")
+
+    url = mock_req.call_args[0][1]
+    assert url == "https://api.atlassian.com/ex/confluence/tenant-123/api/v2/pages"
+    assert "/wiki" not in url
 
 
 # --- _resolve_space_id ---
@@ -123,6 +156,24 @@ def test_resolve_space_id_not_found():
     with patch.object(client, "_request", return_value=mock_response(200, {"results": []})):
         with pytest.raises(ValueError, match="not found"):
             client._resolve_space_id("BADSPACE")
+
+
+def test_resolve_space_id_gateway_routing():
+    client = make_client("cloud", cloud_id="tenant-123")
+
+    with patch.object(
+        client,
+        "_request",
+        return_value=mock_response(200, {"results": [{"id": "456", "key": "MYSPACE"}]}),
+    ) as mock_req:
+        client._resolve_space_id("MYSPACE")
+
+    url = mock_req.call_args[0][1]
+    assert (
+        url
+        == "https://api.atlassian.com/ex/confluence/tenant-123/api/v2/spaces?keys=MYSPACE&limit=1"
+    )
+    assert "/wiki" not in url
 
 
 # --- upload_attachment ---
@@ -182,6 +233,21 @@ def test_upload_attachment_raises_on_error():
             client.upload_attachment("123", "fig.png", b"data", "image/png")
 
 
+def test_upload_attachment_cloud_gateway_routing():
+    client = make_client("cloud", cloud_id="tenant-123")
+
+    with patch.object(client, "_request") as mock_req:
+        mock_req.return_value = mock_response(200, {})
+        client.upload_attachment("123", "fig.png", b"\x89PNG", "image/png")
+
+    url = mock_req.call_args[0][1]
+    assert (
+        url
+        == "https://api.atlassian.com/ex/confluence/tenant-123/rest/api/content/123/child/attachment"
+    )
+    assert "/wiki" not in url
+
+
 # --- get_page ---
 
 
@@ -209,6 +275,31 @@ def test_get_page_dc():
 
     assert page["version"] == 2
     assert page["body"] == "<p>dc content</p>"
+
+
+def test_get_page_cloud_gateway_routing():
+    client = make_client("cloud", cloud_id="tenant-123")
+    resp_data = {
+        "version": {"number": 3},
+        "body": {"storage": {"value": "<p>content</p>"}},
+    }
+    with patch.object(client, "_request", return_value=mock_response(200, resp_data)) as mock_req:
+        client.get_page("42")
+
+    url = mock_req.call_args[0][1]
+    assert url.startswith("https://api.atlassian.com/ex/confluence/tenant-123/api/v2/pages/42")
+    assert "/wiki" not in url
+
+
+def test_update_page_cloud_gateway_routing():
+    client = make_client("cloud", cloud_id="tenant-123")
+
+    with patch.object(client, "_request", return_value=mock_response(200, {})) as mock_req:
+        client.update_page("42", "Title", "<p>body</p>", version=2)
+
+    url = mock_req.call_args[0][1]
+    assert url == "https://api.atlassian.com/ex/confluence/tenant-123/api/v2/pages/42"
+    assert "/wiki" not in url
 
 
 # --- page_exists ---

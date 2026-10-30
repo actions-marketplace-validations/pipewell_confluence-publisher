@@ -44,6 +44,26 @@ In your repository, go to **Settings > Secrets and variables > Actions**.
 | `CONFLUENCE_BASE_URL` | `https://your-org.atlassian.net` | No trailing slash |
 | `CONFLUENCE_MODE` | `cloud` | Use `dc` for Data Center |
 | `CONFLUENCE_EMAIL` | `your.name@example.com` | Cloud only; omit for DC |
+| `CONFLUENCE_CLOUD_ID` | `d14306f1-5802-4283-834c-8a799a89321a` | Cloud only; see "Fine-grained/scoped API tokens" below. Leave unset unless your token needs it |
+
+### Fine-grained/scoped API tokens
+
+Some Atlassian orgs issue fine-grained (scoped) API tokens instead of classic
+unrestricted ones -- or block classic tokens entirely via an org-wide policy. Scoped
+tokens are rejected with a `401 Unauthorized` when called against your site's direct
+domain (`https://your-org.atlassian.net/...`); they only work routed through
+Atlassian's API gateway by tenant ID instead of domain name.
+
+If publishing fails with a 401 despite correct credentials and space permissions, set
+`CONFLUENCE_CLOUD_ID` to your site's cloud ID:
+
+```bash
+curl -s https://your-org.atlassian.net/_edge/tenant_info
+```
+
+This is an unauthenticated endpoint; the response is `{"cloudId": "..."}`. Once set,
+all Cloud API calls route through `https://api.atlassian.com/ex/confluence/{cloudId}/...`
+instead of the direct domain.
 
 ---
 
@@ -81,6 +101,77 @@ pages:
     space_id: TEAM             # overrides the default space
     parent_id: '987654'        # overrides the default parent
 ```
+
+### Structuring `parent_id` for your docs tree
+
+A Confluence page has exactly **one** parent -- there's no equivalent of a file living in two
+folders at once. Beyond that single constraint, there's no limit on how many distinct
+`parent_id` values you use; pick whichever of these patterns matches your docs' shape:
+
+**Flat -- everything under one page.** Set `defaults.parent_id` once and give no page its own
+`parent_id`. Every published page becomes a direct child of the same parent. Simplest option,
+good for a small, unstructured set of docs.
+
+```yaml
+defaults:
+  space_id: ENG
+  parent_id: '123456'          # every page below nests directly under this one
+
+pages:
+  docs/architecture.md:
+    title: Architecture Overview
+  docs/runbook.md:
+    title: Operations Runbook
+```
+
+**Grouped -- a few named sections.** Override `parent_id` per page (or per small group of
+pages) to fan them out under different existing parents -- e.g. everything under `docs/adr/`
+nests under your team's "Architecture Decisions" page, while everything else stays under the
+default.
+
+```yaml
+defaults:
+  space_id: ENG
+  parent_id: '123456'          # default: top-level docs page
+
+pages:
+  docs/architecture.md:
+    title: Architecture Overview
+    # inherits defaults.parent_id: '123456'
+
+  docs/adr/adr-001-single-repo.md:
+    title: 'ADR-001: Single Repo'
+    parent_id: '789012'         # a different, existing "Architecture Decisions" page
+
+  docs/adr/adr-002-browser-driver.md:
+    title: 'ADR-002: Browser Driver Protocol'
+    parent_id: '789012'         # same ADR parent as above
+```
+
+**Nested -- a multi-level tree.** `parent_id` can point at *any* existing Confluence page, not
+just one you created by hand -- including a page this same manifest manages. Publish the parent
+page first (or already know its ID from a prior run), then point child entries at it to build a
+tree that mirrors your folder structure:
+
+```yaml
+pages:
+  docs/adr/index.md:
+    title: Architecture Decisions
+    page_id: '789012'            # this page already exists -- its ID is the parent below
+
+  docs/adr/adr-001-single-repo.md:
+    title: 'ADR-001: Single Repo'
+    parent_id: '789012'          # nests under the ADR index page above
+
+  docs/adr/adr-002-browser-driver.md:
+    title: 'ADR-002: Browser Driver Protocol'
+    parent_id: '789012'
+```
+
+Whichever pattern you use, **the `parent_id` value must be the ID of a page that already
+exists** in the target space -- the tool doesn't create parent pages implicitly. If you copy a
+`parent_id` from an old page that's since been deleted or moved, every page pointed at it will
+fail to publish with a `400 Bad Request` on create -- see Troubleshooting below.
 
 ---
 
@@ -122,12 +213,35 @@ the existing pages rather than creating new ones.
 ### How manifest write-back works
 
 After publishing, the action commits the updated manifest directly to the branch using the
-GitHub Contents API. This requires no extra configuration in most repositories.
+GitHub Contents API. This requires the workflow's token to have write access -- if your
+repository (or org) defaults GITHUB_TOKEN to read-only, add a `permissions:` block to the
+job:
+
+```yaml
+jobs:
+  publish:
+    permissions:
+      contents: write
+      pull-requests: write
+```
+
+Without this, both the direct commit and the PR fallback below fail with
+`Write access to repository not granted`.
 
 If your repository has branch protection on `main` that requires pull requests, the direct
-commit will be blocked. The action will then open a PR automatically. **Merge that PR
+commit will be blocked even with write access. The action will then open a PR automatically,
+on a branch named `manifest-writeback-<timestamp>` by default. **Merge that PR
 promptly** -- until it is merged, the next publish run will not have the new page IDs and
 may attempt to re-create pages that already exist.
+
+If your org enforces a branch-naming ruleset, that fallback branch name may itself be
+rejected (`Branch name must match a given regex pattern`). Set `writeback-branch-prefix` to
+something that satisfies your pattern, e.g.:
+
+```yaml
+    with:
+      writeback-branch-prefix: 'chore/no-ticket-manifest-writeback-'
+```
 
 To avoid the PR fallback entirely, grant `github-actions[bot]` bypass permission on the
 branch protection rule:
@@ -194,6 +308,40 @@ overwritten; the non-zero exit code surfaces the conflict to the PR author.
 
 ---
 
+## Attribution banner
+
+Every published page gets a small auto-generated info banner noting it's managed from GitHub,
+the source file, and the commit SHA -- plus a "Published with confluence-publisher" line
+crediting the tool, by default.
+
+To omit that last line, set `attribution: false` under `defaults` in the manifest, or force it
+off per-run with `--no-attribution` on the `sync` command / `no-attribution: 'true'` on the
+action input (the CLI flag always wins toward off, regardless of the manifest setting).
+
+---
+
+## Inline comment preservation
+
+Confluence anchors an inline comment to specific text by embedding a marker directly in the
+page body. Since every publish replaces the full body, this used to orphan every inline
+comment unconditionally (still true if you're on an older version).
+
+As of v1.3.0, a comment survives a republish automatically **if the exact commented text is
+still present, unchanged, and appears exactly once** in the newly-published content. No
+configuration needed -- this is always on, since it can only help (worst case is today's
+behaviour: the thread survives in Confluence but is detached from the text).
+
+It won't survive if:
+- the commented text was reworded or removed
+- the same text now appears more than once on the page (ambiguous which occurrence to anchor)
+- the comment was on formatted text specifically (e.g. just the bold word in a sentence, not
+  the whole line) rather than plain text
+
+Footer/page-level comments are unaffected either way -- they're stored separately from the
+body and this tool never touches them.
+
+---
+
 ## Failure and retry behaviour
 
 All failures are hard errors -- the build exits non-zero. There are no silent failures.
@@ -213,10 +361,35 @@ to re-create pages that already exist in Confluence. Merge the manifest PR first
 the publish workflow. To prevent this in future, grant `github-actions[bot]` bypass permission
 on the branch protection rule as described in Step 5.
 
+**`Write access to repository not granted` in the "Write back manifest" step**
+
+The workflow's token has read-only access. Add `permissions: contents: write` (and
+`pull-requests: write` for the PR fallback) to the job -- see "How manifest write-back works"
+above.
+
+**`Branch name must match a given regex pattern` in the "Write back manifest" step**
+
+Your org enforces a branch-naming ruleset that the default `manifest-writeback-<timestamp>`
+fallback branch name doesn't satisfy. Set `writeback-branch-prefix` to a prefix that matches
+your pattern -- see "How manifest write-back works" above. This failure only blocks the
+write-back step; the actual Confluence publish already succeeded, so no content is lost --
+but the manifest may need `page_id` values recorded manually for any newly created pages
+until write-back succeeds.
+
 **`page_id not found` on validate-manifest**
 
 The Confluence page was deleted or moved. Either restore it in Confluence or remove the
 `page_id` from the manifest entry so the page is recreated automatically on the next push.
+
+**`Failed to create page: 400 Bad Request` on a new page**
+
+The most common cause is `parent_id` (from `defaults.parent_id` or a per-page override)
+pointing at a page that no longer exists -- deleted, moved, or copied from an old manifest.
+Confluence rejects the create outright rather than publishing without a parent. Open the
+intended parent page in Confluence and confirm its ID (see "Finding a page ID" above), fix the
+`parent_id` in the manifest, and push again. If several pages share the same `parent_id` and
+all fail together, that's a strong signal the shared parent ID itself is the problem, not the
+individual pages -- check it first before investigating each page separately.
 
 **Conversion error: unsupported Markdown syntax**
 
@@ -239,4 +412,5 @@ the `publish` job, check the Install Mermaid CLI step in the workflow log.
 - Confirm `CONFLUENCE_BASE_URL` has no trailing slash
 - Verify the API token has not expired
 - For Cloud: ensure `CONFLUENCE_EMAIL` matches the Atlassian account that owns the token
+- For Cloud: if the token is fine-grained/scoped, set `CONFLUENCE_CLOUD_ID` (see "Fine-grained/scoped API tokens" above) -- scoped tokens 401 on the direct domain regardless of permissions
 - For DC: confirm the Personal Access Token has write access to the target space

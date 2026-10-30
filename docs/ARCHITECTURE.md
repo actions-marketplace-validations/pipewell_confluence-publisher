@@ -70,9 +70,9 @@ class PageEntry:
     space_id: str | None
     parent_id: str | None
     title: str
-    last_published_hash: str | None      # written back after each successful publish
-    last_published_version: int | None   # used for edit-conflict detection
-    last_published_commit: str | None    # informational
+    last_published_hash: str | None  # written back after each successful publish
+    last_published_version: int | None  # used for edit-conflict detection
+    last_published_commit: str | None  # informational
 ```
 
 The manifest is the only persistent state. After a successful publish the tool writes back
@@ -165,7 +165,7 @@ Two top-level functions:
 
 ### 6. GitHub Action (`action.yml`)
 
-Composite action at the repository root. Consumers use `uses: hollowpipe/confluence-publisher@v1`.
+Composite action at the repository root. Consumers use `uses: pipewell/confluence-publisher@v1`.
 
 Inputs: `operation`, `confluence-base-url`, `confluence-mode`, `confluence-email`,
 `confluence-api-token`, `confluence-cert-pem`, `changed-files`, `dry-run`,

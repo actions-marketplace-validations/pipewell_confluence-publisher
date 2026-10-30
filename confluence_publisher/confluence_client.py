@@ -35,12 +35,20 @@ class ConfluenceClient:
         mode: str,
         email: str | None = None,
         cert_pem_b64: str | None = None,
+        cloud_id: str | None = None,
         max_requests: int = 3,
     ):
         if mode not in ("dc", "cloud"):
             raise ValueError(f"mode must be 'dc' or 'cloud', got '{mode}'")
         self.mode = mode
         self.base_url = base_url.rstrip("/")
+        if self.mode == "cloud" and self.base_url.endswith("/wiki"):
+            self.base_url = self.base_url[: -len("/wiki")]
+        self.cloud_id = cloud_id if self.mode == "cloud" else None
+        if self.cloud_id:
+            # Fine-grained/scoped Atlassian API tokens are rejected on the tenant's
+            # direct domain and only work routed through the API gateway by cloudId.
+            self.base_url = f"https://api.atlassian.com/ex/confluence/{self.cloud_id}"
         pem_path = _write_pem(cert_pem_b64) if cert_pem_b64 else None
         self._session = self._build_session(token, email, pem_path)
         self._space_id_cache: dict[str, str] = {}
@@ -62,7 +70,15 @@ class ConfluenceClient:
     def _url(self, path: str) -> str:
         if self.mode == "dc":
             return f"{self.base_url}/rest/api/content/{path.lstrip('/')}"
+        if self.cloud_id:
+            return f"{self.base_url}/api/v2/{path.lstrip('/')}"
         return f"{self.base_url}/wiki/api/v2/{path.lstrip('/')}"
+
+    def _legacy_content_url(self, path: str) -> str:
+        """URL for the legacy REST content API (v1), used only for attachments."""
+        if self.mode == "dc" or self.cloud_id:
+            return f"{self.base_url}/rest/api/content/{path.lstrip('/')}"
+        return f"{self.base_url}/wiki/rest/api/content/{path.lstrip('/')}"
 
     @retry(
         wait=wait_exponential(multiplier=1, min=4, max=300),
@@ -79,6 +95,15 @@ class ConfluenceClient:
                 f"HTTP {response.status_code} from {url} - will retry",
                 response=response,
             )
+        response.raise_for_status()
+        return response
+
+    def _request_no_retry(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+        """Like _request but never retries. Used for non-idempotent calls (page
+        creation) where a retry after a lost response could create a duplicate
+        page rather than just repeating a safe read or a versioned write."""
+        kwargs.setdefault("timeout", 30)
+        response = self._session.request(method, url, **kwargs)
         response.raise_for_status()
         return response
 
@@ -143,7 +168,7 @@ class ConfluenceClient:
                 payload["ancestors"] = [{"id": parent_id}]
         else:
             space_id = self._resolve_space_id(space_key)
-            url = f"{self.base_url}/wiki/api/v2/pages"
+            url = self._url("pages")
             payload = {
                 "spaceId": space_id,
                 "status": "current",
@@ -152,7 +177,10 @@ class ConfluenceClient:
             }
             if parent_id:
                 payload["parentId"] = parent_id
-        data = self._request("POST", url, json=payload).json()
+        # Not retried: if the server creates the page but the response is lost
+        # (e.g. a 503 or timeout after the write succeeded), retrying this POST
+        # would create a second, duplicate page rather than repeat a safe read.
+        data = self._request_no_retry("POST", url, json=payload).json()
         return str(data["id"])
 
     def upload_attachment(
@@ -163,10 +191,7 @@ class ConfluenceClient:
         mime_type: str = "application/octet-stream",
     ) -> None:
         """Upload a file as a page attachment, replacing any existing attachment with the same name."""
-        if self.mode == "dc":
-            url = f"{self.base_url}/rest/api/content/{page_id}/child/attachment"
-        else:
-            url = f"{self.base_url}/wiki/rest/api/content/{page_id}/child/attachment"
+        url = self._legacy_content_url(f"{page_id}/child/attachment")
         # Content-Type: None removes the session's application/json default so
         # requests can auto-set the correct multipart/form-data boundary.
         # Routing through _request gives 429/5xx retry coverage.
@@ -182,7 +207,7 @@ class ConfluenceClient:
         """Resolve a space key to its numeric ID (Cloud only, cached)."""
         if space_key in self._space_id_cache:
             return self._space_id_cache[space_key]
-        url = f"{self.base_url}/wiki/api/v2/spaces?keys={space_key}&limit=1"
+        url = self._url(f"spaces?keys={space_key}&limit=1")
         data = self._request("GET", url).json()
         results = data.get("results", [])
         if not results:

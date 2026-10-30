@@ -5,6 +5,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from ruamel.yaml import YAML
+
+# Round-trip mode preserves comments, key order, and quote style across a
+# load/modify/dump cycle -- plain PyYAML (used for read-only load_manifest)
+# discards comments entirely, which would silently delete any hand-authored
+# comments in confluence-manifest.yaml on the first automated write-back.
+_yaml = YAML()
+_yaml.preserve_quotes = True
+_yaml.indent(mapping=2, sequence=2, offset=0)
 
 
 @dataclass
@@ -53,10 +62,17 @@ def load_manifest(repo_root: Path) -> Manifest:
                 )
             seen_ids[page_id] = file_path
 
+        space_id = entry_data.get("space_id", defaults.get("space_id"))
+        if not space_id:
+            raise ValueError(
+                f"Missing 'space_id' for '{file_path}': set defaults.space_id "
+                "or a per-page space_id override"
+            )
+
         pages[file_path] = PageEntry(
             file_path=file_path,
             page_id=page_id,
-            space_id=entry_data.get("space_id", defaults.get("space_id")),
+            space_id=space_id,
             title=title,
             parent_id=entry_data.get("parent_id", defaults.get("parent_id")),
             last_published_hash=entry_data.get("last_published_hash"),
@@ -74,7 +90,7 @@ def load_manifest(repo_root: Path) -> Manifest:
 
 def save_manifest(manifest: Manifest) -> None:
     with manifest.path.open() as f:
-        data = yaml.safe_load(f)
+        data = _yaml.load(f)
 
     for file_path, entry in manifest.pages.items():
         page_data = (data.get("pages") or {}).get(file_path)
@@ -90,4 +106,4 @@ def save_manifest(manifest: Manifest) -> None:
             page_data["last_published_commit"] = entry.last_published_commit
 
     with manifest.path.open("w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        _yaml.dump(data, f)
